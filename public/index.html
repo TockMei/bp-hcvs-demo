@@ -4,28 +4,58 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BP-HCVS Dashboard | 人的資本価値創造スコア</title>
-<meta name="description" content="BP人的資本価値創造スコア（BP-HCVS）ダッシュボード - 5層×100点満点の人的資本評価指標">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #FFFFFF; -webkit-font-smoothing: antialiased; }
+  #loading { display: flex; align-items: center; justify-content: center; height: 100vh; font-family: 'Noto Sans JP', sans-serif; color: #94A3B8; }
+  #error { display: none; padding: 40px; font-family: monospace; color: #DC2626; white-space: pre-wrap; }
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div id="loading">読み込み中...</div></div>
+<div id="error"></div>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
 <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.10/babel.min.js" crossorigin></script>
 
-<script type="text/babel">
-const { useState } = React;
-const {
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
-} = Recharts;
+<script>
+// Wait for all scripts, then inject the Babel-transformed script
+window.addEventListener("DOMContentLoaded", function() {
+  if (typeof React === "undefined" || typeof Recharts === "undefined" || typeof Babel === "undefined") {
+    document.getElementById("error").style.display = "block";
+    document.getElementById("error").textContent = "Failed to load: React=" + typeof React + " Recharts=" + typeof Recharts + " Babel=" + typeof Babel;
+    return;
+  }
+  try {
+    var appScript = document.getElementById("app-source");
+    var code = Babel.transform(appScript.textContent, { presets: ["react"] }).code;
+    var fn = new Function("React", "ReactDOM", "Recharts", code);
+    fn(React, ReactDOM, Recharts);
+  } catch(e) {
+    document.getElementById("error").style.display = "block";
+    document.getElementById("error").textContent = "Render error:\n" + e.message + "\n" + e.stack;
+  }
+});
+</script>
+
+<script id="app-source" type="text/plain">
+var useState = React.useState;
+var RadarChart = Recharts.RadarChart;
+var PolarGrid = Recharts.PolarGrid;
+var PolarAngleAxis = Recharts.PolarAngleAxis;
+var PolarRadiusAxis = Recharts.PolarRadiusAxis;
+var Radar = Recharts.Radar;
+var ResponsiveContainer = Recharts.ResponsiveContainer;
+var BarChart = Recharts.BarChart;
+var Bar = Recharts.Bar;
+var XAxis = Recharts.XAxis;
+var YAxis = Recharts.YAxis;
+var Tooltip = Recharts.Tooltip;
+var Cell = Recharts.Cell;
 
 // ── Data ───────────────────────────────────────────────
 const LAYERS = [
@@ -530,7 +560,7 @@ function HCVSDashboard() {
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
+var root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(HCVSDashboard));
 </script>
 </body>
