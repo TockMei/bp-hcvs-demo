@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BP-HCVS Dashboard | 人的資本価値創造スコア</title>
+<meta name="description" content="BP人的資本価値創造スコア（BP-HCVS）ダッシュボード - 5層×100点満点の人的資本評価指標">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #FFFFFF; -webkit-font-smoothing: antialiased; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState } = React;
+const {
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
+} = Recharts;
+
+// ── Data ───────────────────────────────────────────────
+const LAYERS = [
+  { key: "L1", name: "開示基盤", weight: 20, color: "#2563EB",
+    question: "人的資本KPIを、どれだけ正確に・体系的に開示しているか",
+    what: "女性管理職比率、賃金格差、離職率、研修費、有休取得率、育休取得率、労災、エンゲージメント等の基礎KPIについて、単なる数値の有無ではなく、分母定義・算定方法・対象範囲・時系列比較・目標値の設定まで評価する。",
+    why: "ISO 30414の指標体系と改訂版人的資本可視化指針が求める「指標と目標」の充実度。開示が曖昧な企業は、そもそも人的資本を経営管理できていない。",
+    source: "有価証券報告書（XBRL）、統合報告書、人的資本レポート" },
+  { key: "L2", name: "戦略連動", weight: 25, color: "#7C3AED",
+    question: "経営戦略と人材戦略は、因果線でつながっているか",
+    what: "経営戦略→必要人材ポートフォリオ→人材投資→KPI→財務成果の因果線が開示上つながっているかを評価。重要スキル定義、事業戦略別の必要人材像、CHRO・取締役会の関与、サクセッション、人的資本リスク管理を対象とする。",
+    why: "内閣官房の改訂版指針案が最も強く求める要素。三菱総研も「企業価値につながるのは人材投資そのものではなく、経営戦略に沿った人的資本投資」と整理。本指標の中核であり最大配点。",
+    source: "有報テキスト・統合報告書からLLM評価AIで抽出" },
+  { key: "L3", name: "変革投資", weight: 20, color: "#0891B2",
+    question: "5年後の競争力を生む人材投資を、実行しているか",
+    what: "研修時間・研修費・中途採用比率・エンゲージメント・一人当たり売上高/付加価値額に加え、スキルギャップ、後継者プール、管理職候補の多様性、社内異動率等を評価。",
+    why: "大和総研が短期財務との頑健な因果を確認できなかった事実は、逆にこの設計を後押しする。短期業績との相関ではなく、5年後の競争力を先行的に示す指標群に特化する。",
+    source: "XBRL定量データ＋有報テキストからのLLM抽出" },
+  { key: "L4", name: "価値創造実証", weight: 20, color: "#059669",
+    question: "人的資本投資は、実際に企業価値を生んでいるか",
+    what: "人的資本ROI、一人当たり営業利益成長率、平均給与成長率、付加価値成長率、ROIC/ROE改善、PBR・TSRとの中期関係を3〜5年ローリングで評価。",
+    why: "JPX日経人的資本100が給与成長率・一人当たり営業利益成長率を採用した着想を、個社評価に落とし込む。単年度のROA/PBRとの見せかけの相関は避け、中期の持続性で見る。",
+    source: "EDINET財務データ（3,848社算出済み）＋J-Quants株価データ" },
+  { key: "L5", name: "ナラティブ品質", weight: 15, color: "#D97706",
+    question: "なぜそれが企業価値につながるのかを、説明できているか",
+    what: "課題認識の具体性、因果の一貫性、経営戦略との接続、失敗・未達の説明、改善計画、投資家対話を意識した記述粒度を評価。美文は加点せず、KPIや事実に裏づけられたストーリーのみを高く評価。",
+    why: "UniposのHCNIが示した「語りの質」による差別化。既存指標にはない、定性評価のAI客観化という最大の差別化要素。",
+    source: "有報テキスト全文（text-blocks/ 3,833社）→ LLM評価AI" },
+];
+
+const SUB_SCORES = [
+  { key: "defense", name: "守りの開示力", layers: ["L1", "L5"],
+    desc: "開示基盤＋ナラティブ品質", icon: "🛡",
+    meaning: "投資家・規制当局が求める「説明責任」をどこまで果たしているか。低い企業はIR評価・ESGレーティングで不利。" },
+  { key: "offense", name: "攻めの成長力", layers: ["L2", "L3"],
+    desc: "戦略連動＋変革投資", icon: "⚡",
+    meaning: "人的資本を将来の競争力に転換する「仕組み」があるか。CHROの経営参画度や次世代人材パイプラインの厚みが鍵。" },
+  { key: "market", name: "市場接続力", layers: ["L4"],
+    desc: "価値創造実証", icon: "📈",
+    meaning: "人的資本投資が財務成果・株主リターンに実際に結びついているか。3〜5年ローリングで「見せかけの相関」を排除。" },
+];
+
+const GRADES = [
+  { grade: "S", min: 85, color: "#7C3AED", bg: "#EDE9FE", label: "卓越", desc: "人的資本経営の設計・実行・説明が高水準で統合されている" },
+  { grade: "A", min: 75, color: "#2563EB", bg: "#DBEAFE", label: "先進", desc: "主要層で高い完成度。一部の層を伸ばせばS到達圏" },
+  { grade: "B", min: 65, color: "#059669", bg: "#D1FAE5", label: "標準以上", desc: "基盤は整備済み。戦略連動やナラティブに改善余地" },
+  { grade: "C", min: 50, color: "#D97706", bg: "#FEF3C7", label: "発展途上", desc: "開示は行っているが、設計力・実行力に課題" },
+  { grade: "D", min: 0, color: "#DC2626", bg: "#FEE2E2", label: "要改善", desc: "開示・戦略連動ともに不十分。早急な体制構築が必要" },
+];
+
+const INDUSTRIES = ["電機", "商社", "IT", "自動車", "金融"];
+
+const companies = [
+  { id: 1, name: "アルファ電機", industry: "電機", scores: { L1: 82, L2: 91, L3: 78, L4: 85, L5: 88 }, profile: "CHRO設置済み、統合報告書で人材戦略を詳述。ナラティブの質が業界トップクラス。" },
+  { id: 2, name: "ベータ商事", industry: "商社", scores: { L1: 90, L2: 72, L3: 65, L4: 80, L5: 60 }, profile: "KPI開示は手厚いが、経営戦略との接続説明が弱い。数値はあるが物語がない典型例。" },
+  { id: 3, name: "ガンマテック", industry: "IT", scores: { L1: 68, L2: 88, L3: 92, L4: 70, L5: 85 }, profile: "リスキリング投資・エンゲージメントで突出。開示基盤の整備が追いつけば一気にS圏。" },
+  { id: 4, name: "デルタ自動車", industry: "自動車", scores: { L1: 95, L2: 80, L3: 72, L4: 90, L5: 55 }, profile: "財務実績は盤石だが、有報のナラティブが定型的で因果説明が薄い。" },
+  { id: 5, name: "イプシロン銀行", industry: "金融", scores: { L1: 88, L2: 65, L3: 58, L4: 75, L5: 70 }, profile: "規制対応で開示は充実。一方、変革投資・人材流動性の指標が業界構造的に低い。" },
+  { id: 6, name: "ゼータ精工", industry: "電機", scores: { L1: 60, L2: 55, L3: 70, L4: 62, L5: 45 }, profile: "製造現場の安全・育成は手堅いが、経営レベルの人的資本戦略が未確立。" },
+  { id: 7, name: "イータ物産", industry: "商社", scores: { L1: 75, L2: 82, L3: 80, L4: 68, L5: 72 }, profile: "攻めの姿勢は明確。財務成果への接続実証がこれからの課題。" },
+  { id: 8, name: "シータシステム", industry: "IT", scores: { L1: 72, L2: 78, L3: 85, L4: 65, L5: 90 }, profile: "ナラティブ品質が際立つ。投資家対話を強く意識した開示姿勢。" },
+  { id: 9, name: "カッパモーター", industry: "自動車", scores: { L1: 85, L2: 70, L3: 60, L4: 82, L5: 50 }, profile: "堅実な財務基盤と開示体制。戦略連動とナラティブの底上げが次の一手。" },
+  { id: 10, name: "ラムダ証券", industry: "金融", scores: { L1: 78, L2: 60, L3: 52, L4: 70, L5: 62 }, profile: "人材投資の絶対額は大きいが、戦略との紐づけと変革投資の説明が弱い。" },
+  { id: 11, name: "ミュー電子", industry: "電機", scores: { L1: 70, L2: 75, L3: 82, L4: 72, L5: 68 }, profile: "DX人材育成に注力。全層でバランスが取れた堅実型。" },
+  { id: 12, name: "ニュー通商", industry: "商社", scores: { L1: 65, L2: 68, L3: 55, L4: 60, L5: 58 }, profile: "開示の網羅性・深度ともに改善余地が大きい。" },
+];
+
+function calcTotal(scores) {
+  return LAYERS.reduce((sum, l) => sum + (scores[l.key] * l.weight) / 100, 0);
+}
+function calcSubScore(scores, sub) {
+  const rel = LAYERS.filter((l) => sub.layers.includes(l.key));
+  const tw = rel.reduce((s, l) => s + l.weight, 0);
+  return Math.round((rel.reduce((s, l) => s + (scores[l.key] * l.weight) / 100, 0) / tw) * 100);
+}
+function getGrade(total) {
+  return GRADES.find((g) => total >= g.min) || GRADES[GRADES.length - 1];
+}
+
+// ── UI Parts ───────────────────────────────────────────
+
+function Badge({ total, size = 44 }) {
+  const g = getGrade(total);
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      width: size, height: size, borderRadius: size * 0.22,
+      background: g.bg, color: g.color, fontWeight: 800, fontSize: size * 0.5,
+      fontFamily: "'DM Mono', monospace", border: `2px solid ${g.color}`,
+    }}>{g.grade}</span>
+  );
+}
+
+function ScoreBar({ value, color, label, weight }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+        <span style={{ fontWeight: 600, color: "#1E293B" }}>{label}<span style={{ fontWeight: 400, color: "#94A3B8", marginLeft: 6 }}>×{weight}%</span></span>
+        <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color }}>{value}<span style={{ fontWeight: 400, color: "#94A3B8" }}>/100</span></span>
+      </div>
+      <div style={{ height: 8, background: "#F1F5F9", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ width: `${value}%`, height: "100%", background: `linear-gradient(90deg, ${color}CC, ${color})`, borderRadius: 4, transition: "width 0.5s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Tabs ────────────────────────────────────────────────
+
+function OverviewTab() {
+  return (
+    <div>
+      {/* Concept */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 10px 0" }}>設計思想</h2>
+        <p style={{ fontSize: 13, lineHeight: 1.85, color: "#334155", margin: 0 }}>
+          BP-HCVSは「人的資本の開示量」を測る指標ではない。<strong>企業価値につながる人的資本の"設計力・実行力・説明力"</strong>を測る指標である。
+          既存の先行指標（JPX日経人的資本100、大和総研スコア、Unipos HCNI、ESG Book等）の知見を統合し、
+          内閣官房の改訂版人的資本可視化指針が求める「経営戦略と人材戦略の連動」を評価の中核に据えた。
+        </p>
+        <div style={{
+          marginTop: 14, padding: "12px 16px", background: "#F8FAFC", borderRadius: 8,
+          borderLeft: "3px solid #7C3AED", fontSize: 13, color: "#334155", lineHeight: 1.7,
+        }}>
+          <strong style={{ color: "#7C3AED" }}>問い：</strong>「この会社は、人への投資を、将来の企業価値に変える設計ができているか？」
+        </div>
+      </div>
+
+      {/* 3 Breakthroughs */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 12px 0" }}>乗り越える3つの断絶</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          {[
+            { num: "①", title: "「開示」と「実態」", solution: "数値KPI＋ナラティブの両面をAIで評価", color: "#2563EB" },
+            { num: "②", title: "「人材投資」と「企業価値」", solution: "財務・株価・ROIとの中期接続（3〜5年）で評価", color: "#059669" },
+            { num: "③", title: "「短期業績」と「中長期競争力」", solution: "5年視点の成長・変革指標を第3層に組み込み", color: "#0891B2" },
+          ].map((b) => (
+            <div key={b.num} style={{ padding: "14px 16px", borderRadius: 10, border: "1px solid #E2E8F0", background: "#FFFFFF" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: b.color, marginBottom: 4 }}>{b.num} {b.title}の断絶</div>
+              <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.6 }}>{b.solution}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Layer details */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 12px 0" }}>5層の設計</h2>
+        {LAYERS.map((l) => (
+          <div key={l.key} style={{
+            marginBottom: 12, padding: "14px 18px", borderRadius: 10,
+            border: "1px solid #E2E8F0", background: "#FFFFFF",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 28, height: 28, borderRadius: 6, background: l.color + "18", color: l.color,
+                fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+              }}>{l.weight}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>{l.name}スコア</span>
+              {l.key === "L2" && <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", background: "#EDE9FE", padding: "2px 8px", borderRadius: 4 }}>中核</span>}
+              {l.key === "L5" && <span style={{ fontSize: 10, fontWeight: 700, color: "#D97706", background: "#FEF3C7", padding: "2px 8px", borderRadius: 4 }}>差別化</span>}
+            </div>
+            <div style={{
+              fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6,
+              padding: "6px 10px", background: "#F8FAFC", borderRadius: 6, lineHeight: 1.6,
+            }}>
+              {l.question}
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.7, marginBottom: 6 }}>{l.what}</div>
+            <div style={{ fontSize: 11, color: "#64748B", lineHeight: 1.6, borderTop: "1px solid #F1F5F9", paddingTop: 6 }}>
+              <strong style={{ color: "#475569" }}>なぜこの層が必要か：</strong>{l.why}
+            </div>
+            <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4 }}>データソース：{l.source}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sub-scores */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 12px 0" }}>サブスコア3軸の意義</h2>
+        <p style={{ fontSize: 12, color: "#64748B", margin: "0 0 12px 0", lineHeight: 1.6 }}>
+          総合スコアだけでは企業の「型」が見えない。3軸で分解することで、企業にとっては改善の優先順位が、投資家にとっては投資判断の切り口が明確になる。
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          {SUB_SCORES.map((s) => (
+            <div key={s.key} style={{ padding: "14px 16px", borderRadius: 10, border: "1px solid #E2E8F0" }}>
+              <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#0F172A", marginBottom: 2 }}>{s.name}</div>
+              <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>{s.desc}</div>
+              <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.6 }}>{s.meaning}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Grade scale */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 12px 0" }}>Grade定義</h2>
+        <div style={{ display: "grid", gap: 6 }}>
+          {GRADES.map((g) => (
+            <div key={g.grade} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderRadius: 8, background: g.bg + "60" }}>
+              <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 800, fontSize: 18, color: g.color, width: 28, textAlign: "center" }}>{g.grade}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: g.color, width: 64 }}>{g.min}点以上</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#1E293B", width: 72 }}>{g.label}</span>
+              <span style={{ fontSize: 12, color: "#64748B" }}>{g.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Differentiation */}
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: "0 0 12px 0" }}>既存指標との差別化</h2>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+            <thead>
+              <tr>
+                {["観点", "JPX日経HC100", "大和総研", "Unipos HCNI", "ESG Book", "BP-HCVS"].map((h, i) => (
+                  <th key={i} style={{
+                    padding: "8px 10px", textAlign: "left", borderBottom: "2px solid #E2E8F0",
+                    color: i === 5 ? "#7C3AED" : "#64748B", fontWeight: 700, fontSize: 11,
+                    background: i === 5 ? "#EDE9FE" : "#FFFFFF", whiteSpace: "nowrap",
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["定量KPI評価", "○", "△", "—", "○", "○"],
+                ["ナラティブ評価", "—", "○", "○", "—", "○"],
+                ["戦略連動性評価", "—", "—", "△", "—", "◎"],
+                ["財務・株価接続", "○", "△", "—", "○", "○"],
+                ["中期（3-5年）視点", "○", "—", "—", "—", "○"],
+                ["業種別重み付け", "—", "—", "—", "○", "○"],
+                ["AI自動採点", "—", "○", "○", "—", "○"],
+                ["個社スコア公表", "—", "○", "○", "○", "○"],
+              ].map((row, ri) => (
+                <tr key={ri} style={{ background: ri % 2 === 0 ? "#FFFFFF" : "#F8FAFC" }}>
+                  {row.map((c, ci) => (
+                    <td key={ci} style={{
+                      padding: "7px 10px", borderBottom: "1px solid #F1F5F9",
+                      fontWeight: ci === 0 ? 600 : 400,
+                      color: ci === 5 ? "#7C3AED" : ci === 0 ? "#1E293B" : c === "◎" ? "#7C3AED" : c === "○" ? "#059669" : c === "△" ? "#D97706" : "#CBD5E1",
+                      fontWeight: ci === 5 || c === "◎" ? 700 : 400,
+                    }}>{c}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompanyDetail({ company }) {
+  const total = calcTotal(company.scores);
+  const g = getGrade(total);
+  const radarData = LAYERS.map((l) => ({ layer: l.name, score: company.scores[l.key], fullMark: 100 }));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+        {/* Left */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6 }}>
+            <Badge total={total} />
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#0F172A" }}>{company.name}</div>
+              <div style={{ fontSize: 12, color: "#94A3B8" }}>
+                {company.industry}｜総合 <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: "#1E293B" }}>{total.toFixed(1)}</span>/100
+                ｜{g.label}
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: 12, color: "#475569", lineHeight: 1.6, margin: "8px 0 16px 0", padding: "8px 12px", background: "#F8FAFC", borderRadius: 6 }}>
+            {company.profile}
+          </p>
+          {LAYERS.map((l) => <ScoreBar key={l.key} value={company.scores[l.key]} color={l.color} label={l.name} weight={l.weight} />)}
+        </div>
+        {/* Right */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <ResponsiveContainer width="100%" height={280}>
+            <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="72%">
+              <PolarGrid stroke="#E2E8F0" />
+              <PolarAngleAxis dataKey="layer" tick={{ fontSize: 12, fill: "#64748B", fontWeight: 600 }} />
+              <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} />
+              <Radar dataKey="score" stroke="#2563EB" fill="#2563EB" fillOpacity={0.13} strokeWidth={2} dot={{ r: 4, fill: "#2563EB" }} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Sub-scores */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 18 }}>
+        {SUB_SCORES.map((s) => {
+          const v = calcSubScore(company.scores, s);
+          const sg = getGrade(v);
+          return (
+            <div key={s.key} style={{ padding: "12px 14px", borderRadius: 10, background: "#F8FAFC", border: "1px solid #E2E8F0" }}>
+              <div style={{ fontSize: 11, color: "#94A3B8" }}>{s.desc}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", margin: "2px 0 4px 0" }}>{s.icon} {s.name}</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 800, color: sg.color }}>{v}</div>
+              <div style={{ fontSize: 11, color: "#64748B", lineHeight: 1.5, marginTop: 4 }}>{s.meaning}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Strength/weakness */}
+      <div style={{ marginTop: 18, padding: "14px 18px", background: "#F8FAFC", borderRadius: 10, border: "1px solid #E2E8F0" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", marginBottom: 8 }}>スコア分析</div>
+        {(() => {
+          const sorted = [...LAYERS].sort((a, b) => company.scores[b.key] - company.scores[a.key]);
+          const strongest = sorted[0];
+          const weakest = sorted[sorted.length - 1];
+          const gap = company.scores[strongest.key] - company.scores[weakest.key];
+          return (
+            <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.8 }}>
+              <span style={{ fontWeight: 600 }}>最高層：</span><span style={{ color: strongest.color, fontWeight: 700 }}>{strongest.name}（{company.scores[strongest.key]}点）</span>
+              ／<span style={{ fontWeight: 600 }}>最低層：</span><span style={{ color: weakest.color, fontWeight: 700 }}>{weakest.name}（{company.scores[weakest.key]}点）</span>
+              ／<span style={{ fontWeight: 600 }}>層間格差：</span>{gap}点
+              {gap >= 30 && <span style={{ color: "#DC2626", fontWeight: 600 }}>（大きな偏り — 低層の底上げが優先課題）</span>}
+              {gap < 15 && <span style={{ color: "#059669", fontWeight: 600 }}>（バランス型 — 全体底上げで上位Grade到達可能）</span>}
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+function RankingTab({ data, selectedId, onSelect, industryFilter }) {
+  const filtered = industryFilter === "全業種" ? data : data.filter((c) => c.industry === industryFilter);
+  const sorted = [...filtered].sort((a, b) => calcTotal(b.scores) - calcTotal(a.scores));
+  const avgData = LAYERS.map((l) => ({
+    name: l.name, avg: Math.round(filtered.reduce((s, c) => s + c.scores[l.key], 0) / filtered.length), color: l.color,
+  }));
+
+  return (
+    <div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+          <thead>
+            <tr>
+              {["#", "企業名", "業種", "総合", ...LAYERS.map((l) => l.name), "Grade", "特徴"].map((h, i) => (
+                <th key={i} style={{
+                  padding: "9px 8px", textAlign: i >= 3 && i <= 9 ? "center" : "left",
+                  borderBottom: "2px solid #E2E8F0", color: "#64748B", fontWeight: 700,
+                  fontSize: 10.5, whiteSpace: "nowrap", background: "#FFF",
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((c, idx) => {
+              const total = calcTotal(c.scores);
+              const sel = c.id === selectedId;
+              return (
+                <tr key={c.id} onClick={() => onSelect(c.id)}
+                  style={{ cursor: "pointer", background: sel ? "#EFF6FF" : idx % 2 === 0 ? "#FFF" : "#F8FAFC", transition: "background 0.15s" }}
+                  onMouseEnter={(e) => { if (!sel) e.currentTarget.style.background = "#F1F5F9"; }}
+                  onMouseLeave={(e) => { if (!sel) e.currentTarget.style.background = idx % 2 === 0 ? "#FFF" : "#F8FAFC"; }}
+                >
+                  <td style={{ padding: "9px 8px", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: idx < 3 ? "#7C3AED" : "#94A3B8", width: 30 }}>{idx + 1}</td>
+                  <td style={{ padding: "9px 8px", fontWeight: sel ? 800 : 600, color: "#0F172A", whiteSpace: "nowrap" }}>{c.name}</td>
+                  <td style={{ padding: "9px 8px", color: "#64748B", fontSize: 11 }}>{c.industry}</td>
+                  <td style={{ padding: "9px 8px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: "#0F172A", fontSize: 13 }}>{total.toFixed(1)}</td>
+                  {LAYERS.map((l) => (
+                    <td key={l.key} style={{ padding: "9px 8px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 600, color: l.color, opacity: 0.3 + (c.scores[l.key] / 100) * 0.7, fontSize: 12 }}>
+                      {c.scores[l.key]}
+                    </td>
+                  ))}
+                  <td style={{ padding: "9px 8px", textAlign: "center" }}><Badge total={total} size={32} /></td>
+                  <td style={{ padding: "9px 8px", fontSize: 11, color: "#64748B", maxWidth: 220, lineHeight: 1.4 }}>{c.profile}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Average chart */}
+      <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #F1F5F9" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", marginBottom: 8 }}>層別平均スコア（{industryFilter}）</div>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={avgData} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+            <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748B" }} axisLine={false} tickLine={false} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #E2E8F0", fontSize: 12 }} formatter={(v) => [`${v}点`, "平均"]} />
+            <Bar dataKey="avg" radius={[4, 4, 0, 0]} barSize={36}>
+              {avgData.map((d, i) => <Cell key={i} fill={d.color} fillOpacity={0.8} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ────────────────────────────────────────────────
+
+function HCVSDashboard() {
+  const [selectedId, setSelectedId] = useState(1);
+  const [industryFilter, setIndustryFilter] = useState("全業種");
+  const [tab, setTab] = useState("detail");
+
+  const selectedCompany = companies.find((c) => c.id === selectedId);
+  const tabs = [
+    { id: "detail", label: "企業詳細" },
+    { id: "ranking", label: "ランキング" },
+    { id: "overview", label: "指標概要" },
+  ];
+
+  return (
+    <div style={{
+      fontFamily: "'Noto Sans JP', 'DM Mono', system-ui, sans-serif",
+      maxWidth: 980, margin: "0 auto", padding: "20px 24px",
+      color: "#0F172A", background: "#FFFFFF", minHeight: "100vh",
+    }}>
+      {/* Header */}
+      <div style={{ marginBottom: 24, paddingBottom: 14, borderBottom: "1px solid #E2E8F0" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#FFF", background: "#0F172A", padding: "3px 8px", borderRadius: 4, letterSpacing: "0.1em" }}>MOCK</span>
+          <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, letterSpacing: "-0.03em" }}>BP 人的資本価値創造スコア</h1>
+        </div>
+        <p style={{ fontSize: 12, color: "#94A3B8", margin: "4px 0 0 0" }}>
+          Human Capital Value Creation Score｜5層×100点満点｜架空企業12社デモ
+        </p>
+        <p style={{ fontSize: 12, color: "#64748B", margin: "2px 0 0 0", fontStyle: "italic" }}>
+          「人への投資を、企業価値に変える力を測る。」
+        </p>
+      </div>
+
+      {/* Nav */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 2, background: "#F1F5F9", borderRadius: 8, padding: 3 }}>
+          {tabs.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              padding: "7px 18px", borderRadius: 6, border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+              background: tab === t.id ? "#FFF" : "transparent", color: tab === t.id ? "#0F172A" : "#94A3B8",
+              boxShadow: tab === t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}>{t.label}</button>
+          ))}
+        </div>
+        {(tab === "detail" || tab === "ranking") && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600 }}>業種</span>
+            <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #E2E8F0",
+              fontSize: 12, fontWeight: 600, color: "#1E293B", cursor: "pointer", outline: "none",
+            }}>
+              <option>全業種</option>
+              {INDUSTRIES.map((ind) => <option key={ind}>{ind}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* Company pills (detail tab) */}
+      {tab === "detail" && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
+          {companies
+            .filter((c) => industryFilter === "全業種" || c.industry === industryFilter)
+            .sort((a, b) => calcTotal(b.scores) - calcTotal(a.scores))
+            .map((c) => {
+              const t = calcTotal(c.scores); const sel = c.id === selectedId;
+              return (
+                <button key={c.id} onClick={() => setSelectedId(c.id)} style={{
+                  padding: "5px 13px", borderRadius: 20, border: sel ? "2px solid #2563EB" : "1px solid #E2E8F0",
+                  background: sel ? "#EFF6FF" : "#FFF", cursor: "pointer",
+                  fontSize: 12, fontWeight: sel ? 700 : 500, color: sel ? "#2563EB" : "#64748B",
+                  transition: "all 0.15s", whiteSpace: "nowrap",
+                }}>{c.name} <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, marginLeft: 3 }}>{t.toFixed(1)}</span></button>
+              );
+            })}
+        </div>
+      )}
+
+      {/* Content */}
+      <div style={{
+        background: "#FFF", border: "1px solid #E2E8F0", borderRadius: 14,
+        padding: 24, boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+      }}>
+        {tab === "overview" && <OverviewTab />}
+        {tab === "detail" && selectedCompany && <CompanyDetail company={selectedCompany} />}
+        {tab === "ranking" && <RankingTab data={companies} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setTab("detail"); }} industryFilter={industryFilter} />}
+      </div>
+
+      {/* Formula */}
+      <div style={{
+        marginTop: 16, padding: "12px 16px", background: "#F8FAFC",
+        borderRadius: 8, border: "1px solid #E2E8F0", fontSize: 11, color: "#64748B",
+        fontFamily: "'DM Mono', monospace", lineHeight: 1.7,
+      }}>
+        <span style={{ fontWeight: 700, color: "#1E293B" }}>BP-HCVS</span> = 20×開示基盤 + 25×戦略連動 + 20×変革投資 + 20×価値創造実証 + 15×ナラティブ品質
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(HCVSDashboard));
+</script>
+</body>
+</html>
